@@ -17,6 +17,13 @@
 #include "ouster/os1.h"
 #include "ouster_ros/point_os1.h"
 
+#include "PassiveTimeSync.h"
+#include "tf/message_filter.h"
+#include <pcl_ros/impl/transforms.hpp>
+
+extern PassiveTimeSync ts_imu;
+extern PassiveTimeSync ts_pcl;  
+
 namespace ouster_ros {
 namespace OS1 {
 
@@ -76,6 +83,18 @@ void add_packet_to_cloud(ns scan_start_ts, ns scan_duration,
                          const PacketMsg& pm, CloudOS1& cloud);
 
 /**
+ * Transform and accumulate points from a lidar packet message into a PCL point cloud. All
+ * points are timestamped relative to scan_start_ts as a fraction of
+ * scan_duration, a float usually [0.0, 1.0)
+ * @param scan_start_ts the timestamp of the beginning of the batch
+ * @param scan_duration length of a scan used to compute point timestamps
+ * @param pm packet message populated by read_lidar_packet
+ * @param cloud PCL point cloud of PointOS1s to accumulate
+ */
+void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
+                         const PacketMsg& pm, CloudOS1& cloud);
+
+/**
  * Serialize a PCL point cloud to a ROS message
  * @param cloud the PCL point cloud to convert
  * @param timestamp the timestamp to give the resulting ROS message
@@ -85,6 +104,17 @@ void add_packet_to_cloud(ns scan_start_ts, ns scan_duration,
  */
 sensor_msgs::PointCloud2 cloud_to_cloud_msg(const CloudOS1& cloud, ns timestamp,
                                             const std::string& frame = "os1");
+/**
+ * Serialize a PCL point cloud to a ROS message
+ * @param cloud the PCL point cloud to convert
+ * @param timestamp the timestamp to give the resulting ROS message
+ * @param frame the frame to set in the resulting ROS message
+ * @returns a ROS message containing the point cloud. Can be deserialized with
+ * fromROSMsg in pcl_conversions
+ */
+sensor_msgs::PointCloud2 transformed_cloud_to_output_cloud_msg(const CloudOS1& cloud, ns timestamp,
+                                            const std::string& frame = "os1");
+
 /**
  * Loop reading from the OS1 client and invoking callbacks with packet messages.
  * Returns when ROS exits. Also runs the ROS event loop via ros::spinOnce().

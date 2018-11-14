@@ -11,7 +11,7 @@ find_package(catkin REQUIRED COMPONENTS
   pcl_conversions
   roscpp
   ouster_client
-)
+)   
 
 add_message_files(DIRECTORY msg FILES PacketMsg.msg)
 generate_messages(DEPENDENCIES std_msgs sensor_msgs)
@@ -19,6 +19,7 @@ generate_messages(DEPENDENCIES std_msgs sensor_msgs)
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
+  "${PROJECT_SOURCE_DIR}/../../../../../submodules/common/"
 )
 
 catkin_package(

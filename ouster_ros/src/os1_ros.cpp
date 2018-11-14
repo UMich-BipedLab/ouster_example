@@ -28,11 +28,12 @@ bool read_lidar_packet(const client& cli, PacketMsg& m) {
 }
 
 sensor_msgs::Imu packet_to_imu_msg(const PacketMsg& p) {
-    const double standard_g = 9.80665;
+    const double standard_g = 9.80665;  
     sensor_msgs::Imu m;
     const uint8_t* buf = p.buf.data();
 
-    m.header.stamp.fromNSec(imu_gyro_ts(buf));
+    // m.header.stamp.fromNSec(imu_gyro_ts(buf));
+    m.header.stamp = ros::Time(ts_imu.correct(m.header.stamp.fromNSec(imu_gyro_ts(buf)).toSec(), ros::Time::now().toSec()));
     m.header.frame_id = "os1_imu";
 
     m.orientation.x = 0;
@@ -66,8 +67,28 @@ sensor_msgs::PointCloud2 cloud_to_cloud_msg(const CloudOS1& cloud, ns timestamp,
     sensor_msgs::PointCloud2 msg;
     pcl::toROSMsg(cloud, msg);
     msg.header.frame_id = frame;
-    msg.header.stamp.fromNSec(timestamp.count());
+    // msg.header.stamp.fromNSec(timestamp.count());
+    msg.header.stamp = ros::Time(ts_pcl.correct(msg.header.stamp.fromNSec(timestamp.count()).toSec(), ros::Time::now().toSec()));
     return msg;
+}
+
+sensor_msgs::PointCloud2 transformed_cloud_to_output_cloud_msg(const CloudOS1& cloud, ns timestamp,
+                                            const std::string& frame) {
+    sensor_msgs::PointCloud2 msg, msgOut;
+    // msg.height = 1; msgOut.height = 1;
+    pcl::toROSMsg(cloud, msg);
+    // std::cout << "cloud.height: " << cloud.height << std::endl;
+    // std::cout << "msg.height: " << msg.height << std::endl;
+    msg.header.frame_id = frame;
+    msg.header.stamp = ros::Time(ts_pcl.correct(msg.header.stamp.fromNSec(timestamp.count()).toSec(), ros::Time::now().toSec()));
+    // std::cout.precision(17);
+    // std::cout << "ros::Time::now().toSec(): " << msg.header.stamp.toSec() << std::endl;
+    // Transform cloud to output frame
+    std::string output_frame_id = "/cassie/vectorNav";
+    tf::TransformListener listener_;
+    pcl_ros::transformPointCloud(output_frame_id, msg, msgOut,
+                                listener_);
+    return msgOut;
 }
 
 static PointOS1 nth_point(int ind, const uint8_t* col_buf) {
@@ -101,6 +122,61 @@ void add_packet_to_cloud(ns scan_start_ts, ns scan_duration,
             cloud.push_back(p);
         }
     }
+}
+void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
+                         const PacketMsg& pm, CloudOS1& cloud) {
+
+    // Initalize
+    CloudOS1 inPc_;
+    CloudOS1 tfPc_;
+    tf::TransformListener listener_;
+    std::string frame_id_ = "/os1";
+    std::string transform_frame_id_ = "/odom";
+
+    // clear input point cloud to handle this packet
+    inPc_.points.clear();
+    inPc_.width = 0;
+    inPc_.height = 1;
+    std_msgs::Header header;
+    // header.stamp.fromNSec(scan_start_ts.count());
+    header.stamp = ros::Time(ts_pcl.correct(header.stamp.fromNSec(scan_start_ts.count()).toSec(), ros::Time::now().toSec()));
+    header.frame_id = frame_id_;
+    pcl_conversions::toPCL(header, inPc_.header);
+    inPc_.header.frame_id = frame_id_;
+
+    // clear transform point cloud for this packet
+    tfPc_.points.clear();           // is this needed?
+    tfPc_.width = 0;
+    tfPc_.height = 1;
+    // header.stamp.fromNSec(scan_start_ts.count());
+    header.stamp = ros::Time(ts_pcl.correct(header.stamp.fromNSec(scan_start_ts.count()).toSec(), ros::Time::now().toSec()));
+    header.frame_id = transform_frame_id_;
+    pcl_conversions::toPCL(header, tfPc_.header);
+    tfPc_.header.frame_id = transform_frame_id_;
+
+    // Unpack data
+    const uint8_t* buf = pm.buf.data();
+    for (int icol = 0; icol < columns_per_buffer; icol++) {
+        const uint8_t* col_buf = nth_col(icol, buf); 
+        float ts = (col_timestamp(col_buf) - scan_start_ts.count()) /
+                   (float)scan_duration.count();
+
+        for (int ipx = 0; ipx < pixels_per_column; ipx++) {
+            auto p = nth_point(ipx, col_buf);
+            p.t = ts;
+            inPc_.push_back(p);
+        }
+    }
+
+    // Transform cloud from packet into the new frame
+    pcl_ros::transformPointCloud(transform_frame_id_, inPc_, tfPc_, listener_);
+
+    // Add to the big cloud
+    cloud.points.insert(cloud.points.end(),
+                        tfPc_.points.begin(),
+                        tfPc_.points.end());
+    // cloud.height = 1;
+    cloud.width += tfPc_.points.size();
 }
 
 void spin(const client& cli,
@@ -143,6 +219,7 @@ std::function<void(const PacketMsg&)> batch_packets(
             scan_ts = nearest_scan_dur(scan_dur, packet_ts);
 
         OS1::add_packet_to_cloud(scan_ts, scan_dur, pm, *cloud);
+        // OS1::add_transformed_packet_to_cloud(scan_ts, scan_dur, pm, *cloud);
 
         auto batch_dur = packet_ts - scan_ts;
         if (batch_dur >= scan_dur || batch_dur < ns(0)) {

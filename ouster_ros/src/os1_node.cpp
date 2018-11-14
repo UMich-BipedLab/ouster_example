@@ -33,6 +33,9 @@
 using ns = std::chrono::nanoseconds;
 using PacketMsg = ouster_ros::PacketMsg;
 
+PassiveTimeSync ts_imu(0.05,0.05);
+PassiveTimeSync ts_pcl(0.05,0.05);  
+
 int main(int argc, char** argv) {
     ros::init(argc, argv, "ouster_driver");
     ros::NodeHandle nh("~");
@@ -51,6 +54,7 @@ int main(int argc, char** argv) {
         scan_dur, [&](ns scan_ts, const ouster_ros::OS1::CloudOS1& cloud) {
             lidar_pub.publish(
                 ouster_ros::OS1::cloud_to_cloud_msg(cloud, scan_ts));
+                // ouster_ros::OS1::transformed_cloud_to_output_cloud_msg(cloud, scan_ts));
         });
 
     auto imu_handler = [&](const PacketMsg& p) {
@@ -73,7 +77,7 @@ int main(int argc, char** argv) {
             ROS_ERROR("Failed to initialize sensor at: %s", os1_hostname.c_str());
             return 1;
         }
-
+        
         ouster_ros::OS1::spin(*cli,
                               [&](const PacketMsg& pm) {
                                   lidar_packet_pub.publish(pm);
