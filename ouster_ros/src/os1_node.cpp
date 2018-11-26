@@ -53,7 +53,7 @@ int main(int argc, char** argv) {
     auto lidar_handler = ouster_ros::OS1::batch_packets(
         scan_dur, [&](ns scan_ts, const ouster_ros::OS1::CloudOS1& cloud) {
             lidar_pub.publish(
-                ouster_ros::OS1::cloud_to_cloud_msg(cloud, scan_ts));
+		ouster_ros::OS1::cloud_to_cloud_msg(cloud, scan_ts));
                 // ouster_ros::OS1::transformed_cloud_to_output_cloud_msg(cloud, scan_ts));
         });
 

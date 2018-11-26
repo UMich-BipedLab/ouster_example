@@ -32,7 +32,7 @@ sensor_msgs::Imu packet_to_imu_msg(const PacketMsg& p) {
     sensor_msgs::Imu m;
     const uint8_t* buf = p.buf.data();
 
-    // m.header.stamp.fromNSec(imu_gyro_ts(buf));
+    //m.header.stamp.fromNSec(imu_gyro_ts(buf));
     m.header.stamp = ros::Time(ts_imu.correct(m.header.stamp.fromNSec(imu_gyro_ts(buf)).toSec(), ros::Time::now().toSec()));
     m.header.frame_id = "os1_imu";
 
@@ -72,6 +72,9 @@ sensor_msgs::PointCloud2 cloud_to_cloud_msg(const CloudOS1& cloud, ns timestamp,
     return msg;
 }
 
+
+
+  
 sensor_msgs::PointCloud2 transformed_cloud_to_output_cloud_msg(const CloudOS1& cloud, ns timestamp,
                                             const std::string& frame) {
     sensor_msgs::PointCloud2 msg, msgOut;
@@ -80,6 +83,7 @@ sensor_msgs::PointCloud2 transformed_cloud_to_output_cloud_msg(const CloudOS1& c
     // std::cout << "cloud.height: " << cloud.height << std::endl;
     // std::cout << "msg.height: " << msg.height << std::endl;
     msg.header.frame_id = frame;
+    // msg.header.stamp.fromNSec(timestamp.count());
     msg.header.stamp = ros::Time(ts_pcl.correct(msg.header.stamp.fromNSec(timestamp.count()).toSec(), ros::Time::now().toSec()));
     // std::cout.precision(17);
     // std::cout << "ros::Time::now().toSec(): " << msg.header.stamp.toSec() << std::endl;
@@ -91,12 +95,17 @@ sensor_msgs::PointCloud2 transformed_cloud_to_output_cloud_msg(const CloudOS1& c
     return msgOut;
 }
 
+static float get_point_angle(int ind, const uint8_t* col_buf) {
+    float h_angle = trig_table[ind].beam_azimuth_angles +
+                    col_h_angle(col_buf);
+    return h_angle;
+}
+  
 static PointOS1 nth_point(int ind, const uint8_t* col_buf) {
-    float h_angle_0 = col_h_angle(col_buf);
     auto tte = trig_table[ind];
     const uint8_t* px_buf = nth_px(ind, col_buf);
     float r = px_range(px_buf) / 1000.0;
-    float h_angle = tte.beam_azimuth_angles + h_angle_0;
+    float h_angle = get_point_angle(ind, col_buf);
 
     PointOS1 point;
     point.reflectivity = px_reflectivity(px_buf);
@@ -117,6 +126,10 @@ void add_packet_to_cloud(ns scan_start_ts, ns scan_duration,
                    (float)scan_duration.count();
 
         for (int ipx = 0; ipx < pixels_per_column; ipx++) {
+	  //float point_angle = get_point_angle(ipx, col_buf);
+	    //if ( point_angle < M_PI / 2.0 ||
+	    //     point_angle > M_PI / 2.0 * 3)
+	    //    continue;
             auto p = nth_point(ipx, col_buf);
             p.t = ts;
             cloud.push_back(p);
@@ -124,7 +137,7 @@ void add_packet_to_cloud(ns scan_start_ts, ns scan_duration,
     }
 }
 void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
-                         const PacketMsg& pm, CloudOS1& cloud) {
+				     const PacketMsg& pm, CloudOS1& cloud) {
 
     // Initalize
     CloudOS1 inPc_;
@@ -138,7 +151,7 @@ void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
     inPc_.width = 0;
     inPc_.height = 1;
     std_msgs::Header header;
-    // header.stamp.fromNSec(scan_start_ts.count());
+    //header.stamp.fromNSec(scan_start_ts.count());
     header.stamp = ros::Time(ts_pcl.correct(header.stamp.fromNSec(scan_start_ts.count()).toSec(), ros::Time::now().toSec()));
     header.frame_id = frame_id_;
     pcl_conversions::toPCL(header, inPc_.header);
@@ -148,7 +161,7 @@ void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
     tfPc_.points.clear();           // is this needed?
     tfPc_.width = 0;
     tfPc_.height = 1;
-    // header.stamp.fromNSec(scan_start_ts.count());
+    //header.stamp.fromNSec(scan_start_ts.count());
     header.stamp = ros::Time(ts_pcl.correct(header.stamp.fromNSec(scan_start_ts.count()).toSec(), ros::Time::now().toSec()));
     header.frame_id = transform_frame_id_;
     pcl_conversions::toPCL(header, tfPc_.header);
@@ -157,26 +170,37 @@ void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
     // Unpack data
     const uint8_t* buf = pm.buf.data();
     for (int icol = 0; icol < columns_per_buffer; icol++) {
-        const uint8_t* col_buf = nth_col(icol, buf); 
+        const uint8_t* col_buf = nth_col(icol, buf);
+
         float ts = (col_timestamp(col_buf) - scan_start_ts.count()) /
                    (float)scan_duration.count();
 
         for (int ipx = 0; ipx < pixels_per_column; ipx++) {
+	    // clamping: we only consider the 180 fov in the front
+  	    float point_angle = get_point_angle(ipx, col_buf);
+	    if ( point_angle < M_PI / 2.0 ||
+	         point_angle > M_PI / 2.0 * 3)
+	        continue;
+	
+
             auto p = nth_point(ipx, col_buf);
             p.t = ts;
             inPc_.push_back(p);
         }
     }
 
-    // Transform cloud from packet into the new frame
-    pcl_ros::transformPointCloud(transform_frame_id_, inPc_, tfPc_, listener_);
+    if (inPc_.empty() == false){
 
-    // Add to the big cloud
-    cloud.points.insert(cloud.points.end(),
-                        tfPc_.points.begin(),
-                        tfPc_.points.end());
-    // cloud.height = 1;
-    cloud.width += tfPc_.points.size();
+      // Transform cloud from packet into the new frame
+      pcl_ros::transformPointCloud(transform_frame_id_, inPc_, tfPc_, listener_);
+
+      // Add to the big cloud
+      cloud.points.insert(cloud.points.end(),
+			  tfPc_.points.begin(),
+			  tfPc_.points.end());
+      // cloud.height = 1;
+      cloud.width += tfPc_.points.size();
+    }
 }
 
 void spin(const client& cli,
