@@ -1,8 +1,11 @@
 #include <pcl_conversions/pcl_conversions.h>
+#include <pcl_ros/impl/transforms.hpp>
 
 #include "ouster/os1.h"
 #include "ouster/os1_packet.h"
 #include "ouster_ros/os1_ros.h"
+
+#include <ros/console.h>
 
 namespace ouster_ros {
 namespace OS1 {
@@ -67,7 +70,7 @@ sensor_msgs::PointCloud2 cloud_to_cloud_msg(const CloudOS1& cloud, ns timestamp,
     sensor_msgs::PointCloud2 msg;
     pcl::toROSMsg(cloud, msg);
     msg.header.frame_id = frame;
-    // msg.header.stamp.fromNSec(timestamp.count());
+    //msg.header.stamp.fromNSec(timestamp.count());
     msg.header.stamp = ros::Time(ts_pcl.correct(msg.header.stamp.fromNSec(timestamp.count()).toSec(), ros::Time::now().toSec()));
     return msg;
 }
@@ -83,7 +86,7 @@ sensor_msgs::PointCloud2 transformed_cloud_to_output_cloud_msg(const CloudOS1& c
     // std::cout << "cloud.height: " << cloud.height << std::endl;
     // std::cout << "msg.height: " << msg.height << std::endl;
     msg.header.frame_id = frame;
-    // msg.header.stamp.fromNSec(timestamp.count());
+    //msg.header.stamp.fromNSec(timestamp.count());
     msg.header.stamp = ros::Time(ts_pcl.correct(msg.header.stamp.fromNSec(timestamp.count()).toSec(), ros::Time::now().toSec()));
     // std::cout.precision(17);
     // std::cout << "ros::Time::now().toSec(): " << msg.header.stamp.toSec() << std::endl;
@@ -126,10 +129,6 @@ void add_packet_to_cloud(ns scan_start_ts, ns scan_duration,
                    (float)scan_duration.count();
 
         for (int ipx = 0; ipx < pixels_per_column; ipx++) {
-	  //float point_angle = get_point_angle(ipx, col_buf);
-	    //if ( point_angle < M_PI / 2.0 ||
-	    //     point_angle > M_PI / 2.0 * 3)
-	    //    continue;
             auto p = nth_point(ipx, col_buf);
             p.t = ts;
             cloud.push_back(p);
@@ -143,17 +142,19 @@ void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
     CloudOS1 inPc_;
     CloudOS1 tfPc_;
     tf::TransformListener listener_;
-    std::string frame_id_ = "/os1";
-    std::string transform_frame_id_ = "/odom";
+    
+    std::string frame_id_ = "os1";             // lidar frame
+    std::string transform_frame_id_ = "os1_imu"; // imu frame
+
 
     // clear input point cloud to handle this packet
     inPc_.points.clear();
     inPc_.width = 0;
     inPc_.height = 1;
     std_msgs::Header header;
-    //header.stamp.fromNSec(scan_start_ts.count());
+    header.stamp.fromNSec(scan_start_ts.count());
     header.stamp = ros::Time(ts_pcl.correct(header.stamp.fromNSec(scan_start_ts.count()).toSec(), ros::Time::now().toSec()));
-    header.frame_id = frame_id_;
+    //header.frame_id = frame_id_;
     pcl_conversions::toPCL(header, inPc_.header);
     inPc_.header.frame_id = frame_id_;
 
@@ -176,12 +177,12 @@ void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
                    (float)scan_duration.count();
 
         for (int ipx = 0; ipx < pixels_per_column; ipx++) {
-	    // clamping: we only consider the 180 fov in the front
+	  /* clamping: we only consider the 180 fov in the front
   	    float point_angle = get_point_angle(ipx, col_buf);
 	    if ( point_angle < M_PI / 2.0 ||
 	         point_angle > M_PI / 2.0 * 3)
 	        continue;
-	
+	  */
 
             auto p = nth_point(ipx, col_buf);
             p.t = ts;
@@ -194,6 +195,7 @@ void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
       // Transform cloud from packet into the new frame
       pcl_ros::transformPointCloud(transform_frame_id_, inPc_, tfPc_, listener_);
 
+
       // Add to the big cloud
       cloud.points.insert(cloud.points.end(),
 			  tfPc_.points.begin(),
@@ -203,6 +205,84 @@ void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
     }
 }
 
+void add_transformed_clamped_packet_to_cloud(ns scan_start_ts, ns scan_duration,
+					     const PacketMsg& pm, CloudOS1& cloud,
+					     const ros::Time & scan_start_ros_ts,
+                                             tf::TransformListener & listener_) {
+
+    // Initalize
+
+
+
+    std::string curr_lidar_frame = "/os1";
+    std::string imu_frame        = "/cassie/vectorNav";
+    std::string fixed_frame      = "/odom";
+    //tf::StampedTransform  imu2os_start, os2imu_now;
+    //listener_.lookupTransform( imu_frame,lidar_frame,
+    //		       scan_start_ros_ts, imu2os_start );
+    //listener_.lookupTransform( lidar_frame, imu_frame,
+    //			       ros::Time::now(), os2imu_now );
+    //tf::Transform os_now2start = os2imu_now * imu2os_start;
+	
+    
+    // original pc from this os1 packet, in the curr_lidar_frame
+    CloudOS1 inPc_; 
+    inPc_.width = 0;
+    inPc_.height = 1;
+    std_msgs::Header os1_header;
+    os1_header.stamp = scan_start_ros_ts;
+    os1_header.frame_id = curr_lidar_frame;
+    pcl_conversions::toPCL(os1_header, inPc_.header);
+
+    // transformed cloud to the pose at scan_start_ros_ts 
+    CloudOS1 tfPc_; 
+    tfPc_.width = 0;
+    tfPc_.height = 1;
+    std_msgs::Header start_header; 
+    start_header.stamp = scan_start_ros_ts;
+    start_header.frame_id = imu_frame;
+    pcl_conversions::toPCL(start_header, tfPc_.header);
+
+    // Unpack data
+    std::cout<<scan_start_ros_ts<<std::endl;
+    const uint8_t* buf = pm.buf.data();
+    for (int icol = 0; icol < columns_per_buffer; icol++) {
+        const uint8_t* col_buf = nth_col(icol, buf);
+        float ts = (col_timestamp(col_buf) - scan_start_ts.count()) /
+                   (float)scan_duration.count();
+
+        for (int ipx = 0; ipx < pixels_per_column; ipx++) {
+          
+	    // clamping: we only consider the 180 fov in the front
+  	    float point_angle = get_point_angle(ipx, col_buf);
+	    if ( point_angle < M_PI / 2.0 ||
+	         point_angle > M_PI / 2.0 * 3)
+	        continue;
+
+            auto p = nth_point(ipx, col_buf);
+            p.t = ts;
+            inPc_.push_back(p);
+        }
+    }
+
+    if (inPc_.empty() == false){
+      // Transform cloud from packet into the new frame
+      pcl_ros::transformPointCloud<PointOS1>(imu_frame ,scan_start_ros_ts, inPc_, fixed_frame, tfPc_, listener_);
+      start_header.stamp.fromNSec(scan_start_ts.count());
+      pcl_conversions::toPCL(start_header, tfPc_.header);
+      
+      //pcl_ros::transformPointCloud<PointOS1> (inPc_, tfPc_, os_now2start);
+
+      // Add to the big cloud
+      cloud.points.insert(cloud.points.end(),
+			  tfPc_.points.begin(),
+			  tfPc_.points.end());
+      cloud.height = 1;
+      cloud.width += tfPc_.points.size();
+    }
+}
+
+  
 void spin(const client& cli,
           const std::function<void(const PacketMsg& pm)>& lidar_handler,
           const std::function<void(const PacketMsg& pm)>& imu_handler) {
@@ -210,12 +290,17 @@ void spin(const client& cli,
     lidar_packet.buf.resize(lidar_packet_bytes + 1);
     imu_packet.buf.resize(imu_packet_bytes + 1);
 
+    ROS_INFO("os1: Start Spin");
+
     while (ros::ok()) {
         auto state = poll_client(cli);
         if (state & ERROR) {
             ROS_ERROR("spin: poll_client returned error");
             return;
         }
+
+	ROS_INFO("poll success");
+	
         if (state & LIDAR_DATA) {
             if (read_lidar_packet(cli, lidar_packet.buf.data()))
                 lidar_handler(lidar_packet);
@@ -233,24 +318,33 @@ static ns nearest_scan_dur(ns scan_dur, ns ts) {
 };
 
 std::function<void(const PacketMsg&)> batch_packets(
-    ns scan_dur, const std::function<void(ns, const CloudOS1&)>& f) {
+    ns scan_dur, tf::TransformListener & listener_ ,
+    const std::function<void(ns, const CloudOS1&)>& f) {
+  
     auto cloud = std::make_shared<OS1::CloudOS1>();
     auto scan_ts = ns(-1L);
 
-    return [=](const PacketMsg& pm) mutable {
+    ros::Time scan_ts_ros_time, scan_ts_os_time;
+
+    return [=, &listener_](const PacketMsg& pm) mutable {
         ns packet_ts = OS1::timestamp_of_lidar_packet(pm);
-        if (scan_ts.count() == -1L)
+        if (scan_ts.count() == -1L) {
             scan_ts = nearest_scan_dur(scan_dur, packet_ts);
-
-        OS1::add_packet_to_cloud(scan_ts, scan_dur, pm, *cloud);
-        // OS1::add_transformed_packet_to_cloud(scan_ts, scan_dur, pm, *cloud);
-
+	    scan_ts_ros_time = ros::Time(ts_pcl.correct(scan_ts_os_time.fromNSec(scan_ts.count()).toSec(),
+							ros::Time::now().toSec()));
+	}
+ 
+        //OS1::add_packet_to_cloud(scan_ts, scan_dur, pm, *cloud);
+        //OS1::add_transformed_packet_to_cloud(scan_ts, scan_dur, pm, *cloud);
+	OS1::add_transformed_clamped_packet_to_cloud(scan_ts, scan_dur, pm, *cloud, scan_ts_ros_time, listener_);
         auto batch_dur = packet_ts - scan_ts;
         if (batch_dur >= scan_dur || batch_dur < ns(0)) {
             f(scan_ts, *cloud);
 
             cloud->clear();
             scan_ts = ns(-1L);
+
+	    std::cout<<"New package\n";
         }
     };
 }

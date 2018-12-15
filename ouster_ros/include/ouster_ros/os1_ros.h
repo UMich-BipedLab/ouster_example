@@ -20,7 +20,7 @@
 #include "PassiveTimeSync.h"
 #include "tf/message_filter.h"
 #include <pcl_ros/impl/transforms.hpp>
-
+#include <ros/time.h>
 extern PassiveTimeSync ts_imu;
 extern PassiveTimeSync ts_pcl;  
 
@@ -94,6 +94,12 @@ void add_packet_to_cloud(ns scan_start_ts, ns scan_duration,
 void add_transformed_packet_to_cloud(ns scan_start_ts, ns scan_duration,
                          const PacketMsg& pm, CloudOS1& cloud);
 
+
+void add_transformed_clamped_packet_to_cloud(ns scan_start_ts, ns scan_duration,
+					     const PacketMsg& pm, CloudOS1& cloud,
+					     ros::Time & scan_start_ros_ts);
+
+ 
 /**
  * Serialize a PCL point cloud to a ROS message
  * @param cloud the PCL point cloud to convert
@@ -137,6 +143,6 @@ void spin(const ouster::OS1::client& cli,
  * read_lidar_packet and invokes f on the result
  */
 std::function<void(const PacketMsg&)> batch_packets(
-    ns scan_dur, const std::function<void(ns, const CloudOS1&)>& f);
+    ns scan_dur, tf::TransformListener & l, const std::function<void(ns, const CloudOS1&)>& f);
 }
 }
