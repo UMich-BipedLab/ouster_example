@@ -20,7 +20,7 @@ generate_messages(DEPENDENCIES std_msgs sensor_msgs)
 include_directories(
   include
   ${catkin_INCLUDE_DIRS}
-  "${PROJECT_SOURCE_DIR}/../../../../../submodules/common/"
+  "${PROJECT_SOURCE_DIR}/../../../../../submodules/utils/include/"
 )
 
 catkin_package(
